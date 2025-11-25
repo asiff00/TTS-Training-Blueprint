@@ -1,61 +1,49 @@
+
 # Blueprint for Building Autoregressive TTS
-We will be teaching an LLM to generate audio tokens in this repository. Consider this as a blueprint for training autoregressive Text-to-Speech models.
 
-## What We're Actually Doing Here
+![TTS Pipeline](assets/tts_pipeline_flow.png)
+TTS stands for text to speech. It takes in text, generates intelligible speech from it. Autoregressive TTS has been very popular lately and we are seeing lots and lots new TTS with good quality everything. Maya1, NuoTTS-Air, Orpheus the list is long. But have you ever wonder how they are trained? Well, that's what we'll be doing here in this article. We will train a model to generate audio. Consider this as a blueprint for training autoregressive Text-to-Speech models. Our goal is to have intuition first understanding of the system.
 
-Let's start with the basics. What is a token? It's just a number. That's all it is.
+Autoregressive TTS are essentially LLM models that is trained on generating audio tokens. Those tokens are converted (decoded) back to audio using a neural audio codec. Before we go in depth of how it works, let's spend a bit on getting intuitive understanding of what token is.
 
-When you type "hello world" into ChatGPT, the model doesn't actually see the words "hello" and "world". It sees numbers. Maybe `[31373, 995]`. The tokenizer converts your text into numbers, the model predicts the next number, and then the detokenizer converts those numbers back into text that you can read.
+## Token, what is even that?
 
-**Example:**
-```
-Text:   "The cat sat on the mat"
-Tokens: [464, 3797, 3332, 319, 262, 2603]
-```
+In its very original form, tokens are just some numbers. That's all it is.
 
-The model never sees "cat" or "mat". It just sees `3797` and `2603`. It learns that after `[464, 3797, 3332, 319, 262]`, the next number is probably `2603`. That's language modeling in a nutshell.
+When you type "hello world" into ChatGPT, the model doesn't actually see the words "hello" and "world". It sees numbers. Maybe `[15339, 1879]`. A tokenizer converts (encodes) your text into tokens, i.e., numbers that model understand. And after processing, it again generates its response in numbers, later that gets converted (detokenized) back to words again for us, dumb humans.
 
-**So here's the insight:** If models just predict numbers, why can't we teach them to predict numbers that represent audio?
+We train LLM to generate these numbers, more accurately predict these numbers, like given a sequence of tokens, what is the likely token comes next in that sequence, so on and so forth. LLM learns this through training. We tell them what tokens to generate through training.
 
-That's exactly what we're doing. We're teaching an LLM to generate a few more numbers. Some of those numbers represent words, and some represent audio. The model doesn't know the difference. It just learns: "when I see these numbers, the next number should be this."
+Since everything an LLM sees (even the instruction for what the LLM are supposed to do), can we not just teach LLM to generate tokens that when converted (decoded) makes sounds? That's the whole idea of auto-regressive TTS. We teach LLM to generate audio tokens. That's all we do.
 
-## How Do You Get Audio Tokens?
+## Tokenizer
 
-For text, you use a tokenizer that comes with the model. BERT has a tokenizer, GPT has a tokenizer, Qwen has a tokenizer. They all convert text to numbers.
+Since it's all about tokens, we need a system that knows what token stands for what words. A tokenizer does exactly that. It knows what's the token for cat and what's the token for dog and it can convert words to tokens, and tokens to words consistently. BERT, GPT, Llama all variants have their own tokenizer. Tokenizers are specialized to do the conversion on a set of vocabulary that they are given, but it's flexible to extension.
 
-Current LLMs doens't often come with audio tokenizers, therefor we need to find something that does. There's comes **audio codecs** that takes audio and returns numbers. SNAC is one of the most used audio codecs out there currenlty.
+## Audio Tokenization
 
-**Example with SNAC codec:**
+Text and audio tokens both are essentially numbers but most generally used tokenizer doesn't know audio tokens out of the box. We use special system (neural audio codec - encoder/decoder) for that. DAC, SNAC, NuoCodec are some of the popular audio codecs that are used for TTS training. For this specific article, we will be exploring SNAC that powers many of the current popular TTS models.
 
-The audio codec compresses the continuous waveform into discrete tokens. Just like a text tokenizer compresses "hello" into `31373`, the audio codec compresses sound into numbers. Something like this:
+### SNAC
 
-```
-Audio:  [0.02, 0.04, 0.01, -0.03, ...]  (waveform samples)
-        ↓ SNAC Encoder
-Tokens: [2847, 1092, 3856, 457, 2901, 3345, 1823, ...]  (audio tokens)
-```
+Audio tokenizer i.e., codec models (neural encoder/decoder) takes audio and gives out token representation (discrete codes) of that audio. Each codec has its own pattern that it produces its tokens into and expects to maintain the same pattern to generate (decode) audio back from it. Understanding the pattern is the most important part of the TTS training. This is where you'll be spending most of your energy into. Once you got it sorted, all you do is just sit back and wait for the training to finish. Kidding, there's a lot you have to do, but this is one major part that needs to be sorted.
 
-## Understanding Audio Codecs
+Anyway, SNAC takes audio (through its encoder) and gives you layers of token representation. It has 3 layers in total, and understanding this is kinda important.
 
-Every audio codec has its own way of generating tokens. Some use one number per audio frame. Some use multiple numbers. Some arrange them in layers. You need to understand your codec's pattern to use it properly.
+So here's how it works. Instead of giving you one number per audio frame, SNAC gives you multiple numbers arranged in 3 layers. Think of it like describing a photo at different levels of detail:
 
-**SNAC's pattern:**
+- **Layer 0 :** "It's a cat" - just the basic stuff
+- **Layer 1 :** "It's an orange tabby cat" - getting more specific
+- **Layer 2 :** "It's an orange tabby cat with green eyes and a white patch" - all the fine details
 
-SNAC uses something called a **hierarchical codebook**. Instead of one number per frame, it gives you multiple numbers arranged in 3 layers.
-
-Think of it like describing a photo at different levels of detail:
-- **Layer 0 (coarse):** "It's a cat" → captures the main subject
-- **Layer 1 (medium):** "It's an orange tabby cat" → captures more details  
-- **Layer 2 (fine):** "It's an orange tabby cat with green eyes and a white patch on its nose" → captures fine details
-
-SNAC does the same for audio:
+SNAC does the exact same thing for audio:
 - **Layer 0 (1 token per frame):** What phoneme is this? Is the pitch high or low?
 - **Layer 1 (2 tokens per frame):** What does the speaker sound like? Male or female voice?
-- **Layer 2 (4 tokens per frame):** What's the breathiness? Any background noise?
+- **Layer 2 (4 tokens per frame):** What's the breathiness? Any background noise? The tiny details.
 
-So for each audio frame, you get **7 total tokens**: 1 from Layer 0, 2 from Layer 1, and 4 from Layer 2.
+So for each audio frame, you get **7 total tokens**. 1 from Layer 0, 2 from Layer 1, and 4 from Layer 2. That's 7 numbers representing about 40ms of audio.
 
-**Example for one audio frame:**
+Here's what it looks like for one frame:
 ```
 Audio frame: "ah" sound (40ms of audio)
 Layer 0: [2847]                    # phoneme + pitch
@@ -65,367 +53,255 @@ Layer 2: [457, 2901, 3345, 1823]   # fine details
 All together: [2847, 1092, 3856, 457, 2901, 3345, 1823]
 ```
 
-Each layer uses a "codebook" of 4096 possible values. Layer 0 tokens can be 0-4095. Layer 1 tokens can be 0-4095. Layer 2 tokens can be 0-4095. That's why it's called **vector quantization** (VQ). The encoder looks up the closest match in its codebook and returns that code number.
+Each layer uses a codebook of 4096 possible values (0-4095). The encoder just looks up the closest match in its codebook and returns that number (code index). That's why it's called **vector quantization** (VQ), some fancy name for "lookup table".
 
-## Teaching the LLM the Pattern
+### Flattening the Hierarchy
 
-LLMs are, in essence, next-token predictors. You give them a sequence of numbers, they predict the next number. That's literally all they do. **Once you have the tokens, it's all the same for the LLM.** Once trained, the model will generate these tokens, no questions asked. The model doesn't care if token `31373` means "hello" and token `151936` means "an 'ah' sound at 440 Hz". It just learns the patterns.
+Now, as we previously mentioned, LLM is designed to predict the next token in a sequence, therefore, we need to somehow convert this complex time-intervalled 3-layered, hierarchical structure of audio codes to a flat sequence. We need a system that can take SNAC encoded output and convert (flatten) it to 1D sequence of tokens and take a 1D sequence of tokens and reconstruct (unflatten) it to the SNAC decoder's expected 3-layer structure. Here is common pattern variant used by many TTS models currently.
 
-So what we have to do is arrange those audio tokens in order and teach the LLM to learn the pattern. What token comes after what for what sound.
+Now here's the problem. LLMs need a flat, 1D sequence. Like `[1, 2, 3, 4, 5, 6, 7, 8, ...]`. But SNAC gives us hierarchical codes in 3 separate layers. So we need to flatten this mess.
 
-**The training data looks like this:**
-```
-Text tokens:  [31373, 995]           # "hello world"
-Audio start:  [164226]                # <audio_start> special token
-Audio tokens: [2847, 1092, 3856, ...] # the actual audio
-Audio end:    [164227]                # <audio_end> special token
-
-Combined sequence:
-[31373, 995, 164226, 2847, 1092, 3856, 457, 2901, 3345, 1823, ..., 164227]
- └─text──┘  └start┘ └──────────────audio tokens──────────────┘  └─end─┘
-```
-
-The LLM learns: "When I see text tokens followed by the start token, I should generate audio tokens that correspond to those words."
-
-During training:
-- Input: `[31373, 995, 164226, 2847, 1092, 3856, ...]`
-- Model predicts next token: `457`
-- Input: `[31373, 995, 164226, 2847, 1092, 3856, 457, ...]`
-- Model predicts next token: `2901`
-- And so on...
-
-It's learning the statistical pattern of audio tokens just like it learned the statistical pattern of text tokens.
-
-## The Complete Picture
-
-Let me show you the entire flow from text to speech:
-
-**1. Training Phase**
-
-You have a dataset of text-audio pairs. Like `("hello world", hello_world.wav)`.
-
-```
-Step 1: Tokenize the text
-   "hello world" → [31373, 995]
-
-Step 2: Encode the audio with SNAC
-   hello_world.wav → [2847, 1092, 3856, 457, ..., 1234, 5678]
-   (Let's say this is 14 tokens total, which is 2 audio frames)
-
-Step 3: Create the training sequence
-   [31373, 995, <start>, 2847, 1092, 3856, 457, 2901, 3345, 1823, 
-    3042, 1847, 2938, 4527, 1234, 5678, <end>]
-   
-Step 4: Train the LLM
-   - Mask the text tokens (we don't want to predict text from text)
-   - Train it to predict audio tokens after seeing text + <start>
-   - Loss is only computed on the audio tokens
-```
-
-**2. Inference Phase**
-
-You want to generate speech for new text. Like `"this is a test"`.
-
-```
-Step 1: Tokenize the text
-   "this is a test" → [5661, 318, 257, 1332]
-
-Step 2: Append the start token
-   [5661, 318, 257, 1332, <start>]
-
-Step 3: Generate audio tokens autoregressively
-   Model predicts: 1847
-   Append: [5661, 318, 257, 1332, <start>, 1847]
-   
-   Model predicts: 2934
-   Append: [5661, 318, 257, 1332, <start>, 1847, 2934]
-   
-   ... keep going until the model generates <end> or you hit max length
-   
-   Final: [5661, 318, 257, 1332, <start>, 1847, 2934, 3845, ..., <end>]
-
-Step 4: Extract just the audio tokens
-   [1847, 2934, 3845, 2901, 3764, 1092, ...]
-
-Step 5: Decode with SNAC
-   Audio tokens → waveform → save as audio file
-```
-
-That's it. That's the entire system.
-
-## The Core Components
-
-Now that you understand the intuition, let's break down the actual components you need to build this.
-
-### 1. Audio Codec (The Audio Tokenizer)
-
-You need a neural audio codec that can:
-- **Encode:** audio waveform → discrete tokens
-- **Decode:** discrete tokens → audio waveform
-
-**Popular options:**
-- **SNAC** (what we use) - 7 tokens/frame, 24kHz, hierarchical
-- **EnCodec** (Meta) - 8 codebooks, 24kHz, very popular
-- **SoundStream** (Google) - similar to EnCodec
-- **DAC** (Descript) - high quality, good for music
-
-**How SNAC works under the hood:**
-
-It's a VQ-VAE (Vector Quantized Variational AutoEncoder). Think of it like this:
-
-```
-Encoder:
-  Audio → Neural Network → Continuous features → [quantize] → Discrete codes
-  
-  "Quantize" means: look up the closest match in a codebook
-  Codebook is just a table of 4096 learned vectors
-  You find the closest vector, return its index (0-4095)
-
-Decoder:
-  Discrete codes → [lookup in codebook] → Continuous features → Neural Network → Audio
-```
-
-The encoder and decoder are trained together. During training, SNAC learns:
-- What 4096 vectors to store in each codebook (Layer 0, 1, 2)
-- How to encode audio into these codes
-- How to decode codes back to audio that sounds like the original
-
-Once trained, the codebook is frozen. You just use the encoder to get codes, and the decoder to get audio back.
-
-### 2. Vocabulary Extension
-
-Here's a practical problem: your LLM has a vocabulary of, say, 152,000 tokens (for text). SNAC gives you audio tokens in the range 0-4095 for each layer.
-
-You need to make sure audio tokens don't overlap with text tokens. Otherwise, the model gets confused. Is token `1000` the word "the" or an audio code?
-
-**Solution: Offset the audio tokens**
-
-```
-Text tokens: 0 to 151,935        (Qwen's original vocabulary)
-Audio tokens: 151,936 to 164,225 (12,290 new tokens we add)
-
-Layer 0 codes (0-4095)   → Add offset 151,936 → IDs 151,936 to 156,031
-Layer 1 codes (0-4095)   → Add offset 156,032 → IDs 156,032 to 160,127
-Layer 2 codes (0-4095)   → Add offset 160,128 → IDs 160,128 to 164,223
-Special tokens           → IDs 164,224 to 164,225 (<audio_start>, <audio_end>)
-```
-
-Now every token has a unique ID. The model can distinguish "this is the word 'hello'" from "this is the start of an audio sequence."
-
-**In code:**
-```python
-# Extend the tokenizer
-new_tokens = []
-for layer in range(3):
-    for code in range(4096):
-        new_tokens.append(f"<snac_l{layer}_{code}>")
-new_tokens += ["<audio_start>", "<audio_end>"]
-
-tokenizer.add_tokens(new_tokens)  # Adds 12,290 tokens
-model.resize_token_embeddings(len(tokenizer))  # Resize model to handle new vocab
-```
-
-Now the model has 164,226 tokens total. It can predict both text and audio.
-
-### 3. Flattening the Hierarchy
-
-SNAC gives you hierarchical codes:
-```
-Layer 0: [c0_0, c0_1, c0_2, ...]        # 1 per frame
-Layer 1: [c1_0, c1_1, c1_2, c1_3, ...]  # 2 per frame
-Layer 2: [c2_0, c2_1, ..., c2_7, ...]   # 4 per frame
-```
-
-LLMs need a flat, 1D sequence. So we flatten using a fixed pattern.
-
-**For each frame, we arrange tokens like this:**
+We do this by following a simple pattern. For each frame, we arrange the 7 tokens in order:
 ```
 Frame 0: [c0_0, c1_0, c1_1, c2_0, c2_1, c2_2, c2_3]
 Frame 1: [c0_1, c1_2, c1_3, c2_4, c2_5, c2_6, c2_7]
 Frame 2: [c0_2, c1_4, c1_5, c2_8, c2_9, c2_10, c2_11]
-...
 ```
 
-Every 7 tokens = 1 audio frame. The pattern is deterministic, so we can reverse it during inference.
+Every 7 tokens = 1 audio frame. That's it. Simple pattern. And since it's deterministic, we can reverse it during inference.
 
-This flattening approach is borrowed from [Orpheus-TTS](https://github.com/canopyai/Orpheus-TTS), which demonstrated that this hierarchical pattern works well for autoregressive TTS. See [Flattening Method](https://colab.research.google.com/github/unslothai/notebooks/blob/main/nb/Orpheus_(3B)-TTS.ipynb#scrollTo=zK94B-Pfioto) for the implementation reference. Our `prepare_dataset.py` follows the same principle.
-
-
-### 4. Training
-
-Once you have the flat sequence of tokens, training is straightforward. You use standard causal language modeling.
-
-**Loss masking:**
-```
-Input:  [text_tokens, <start>, audio_tokens]
-Labels: [-100, -100,   -100,    audio_tokens, <end>]
-```
-
-The `-100` tells the model to ignore those positions during loss calculation. We only compute loss on the audio tokens. This way, the model learns:
-- TEXT → AUDIO mapping
-- Not TEXT → TEXT (it already knows that from pretraining)
-
-
-### 5. Inference and Decoding
-
-During inference, you reverse everything.
-
-**Steps:**
-```
-1. Tokenize text: "hello" → [31373]
-2. Add start: [31373, <start>]
-3. Generate: Model autoregressively predicts audio tokens
-   → [31373, <start>, 2847, 1092, 3856, 457, 2901, 3345, 1823, ..., <end>]
-4. Extract audio tokens: [2847, 1092, 3856, 457, 2901, 3345, 1823, ...]
-5. Unflatten to hierarchical codes:
-   Frame 0: L0=[2847], L1=[1092, 3856], L2=[457, 2901, 3345, 1823]
-6. Decode with SNAC: hierarchical codes → waveform
-7. Save: output.wav
-```
-
-**Unflattening code:**
+Here's what the unflattening looks like conceptually:
 ```python
-def unflatten(flat_tokens):
+def unflatten(tokens):
     c0, c1, c2 = [], [], []
-    for i in range(0, len(flat_tokens), 7):  # Every 7 tokens is 1 frame
-        frame = flat_tokens[i:i+7]
-        c0.append(frame[0])           # 1st token → Layer 0
-        c1.extend(frame[1:3])         # 2nd-3rd tokens → Layer 1
-        c2.extend(frame[3:7])         # 4th-7th tokens → Layer 2
+    i = 0
+    while i + 6 < len(tokens):
+        frame = tokens[i:i+7]  # Take 7 tokens
+        c0.append(frame[0] - SNAC_OFFSET)  # First token → Layer 0
+        c1.extend([frame[1] - SNAC_OFFSET - 4096, frame[2] - SNAC_OFFSET - 4096])  # Next 2 → Layer 1
+        c2.extend([t - SNAC_OFFSET - 8192 for t in frame[3:]])  # Last 4 → Layer 2
+        i += 7
     return [c0, c1, c2]
 ```
 
-Then you pass `[c0, c1, c2]` to SNAC's decoder, and it reconstructs the audio.
+The actual implementation follows later in this article.
 
+### Putting It Together
 
----
----
+As I was screaming earlier, LLM will predict the next token when you give it a sequence. So for TTS, the sequence we give it is the tokenized version of the text we want to generate speech for.
 
-Enough theory. Let's actually build this thing.
-## How to Use This Pipeline
-### Requirements
+Let me show you what "Hello world" actually looks like:
+```
+Text tokens:  [9906, 1879]            # "Hello world" tokenized (Qwen tokenizer)
+Audio start:  [164224]                # <|audio_start|> special token
+Audio tokens: [154783, 157128, 159952, ...] # the actual flattened audio tokens
+Audio end:    [164225]                # <|audio_end|> special token
 
-- **GPU:** CUDA-capable with tons of VRAM (tested on RTX 3060)
-- **Python:** 3.12 or higher
-- **Dataset:** LJSpeech-1.1 (free, ~2.6GB)
-- **Time:** ~ Depens on the size of your pocket
-
-### Installation
-
-```bash
-git clone https://github.com/asiff00/TTS-TRAINING-PIPELINE.git
-cd TTS-TRAINING-PIPELINE
-
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # Linux/Mac
-
-pip install -r requirements.txt
+Combined:
+[9906, 1879, 164224, 154783, 157128, 159952, 160049, 162997, 163441, 163919, ..., 164225]
+ └─text─┘  └start┘ └────────────────audio tokens────────────────────┘  └─end─┘
 ```
 
-### Step 1: Download Dataset (Just once)
+Note: Audio token IDs start from 151936 onwards (SNAC Layer 0: 151936-156031, Layer 1: 156032-160127, Layer 2: 160128-164223), and special tokens are at 164224-164225.
 
-```bash
-wget https://data.keithito.com/data/speech/LJSpeech-1.1.tar.bz2
-tar -xvf LJSpeech-1.1.tar.bz2
-```
+But the model can't do this out of the box. We have to teach it. We have to tell it: "Hey, when you see these text tokens, you should generate these audio tokens."
 
-You get a folder `LJSpeech-1.1/` with:
-- `metadata.csv` (text transcripts)
-- `wavs/` (13,100 audio files)
+## Dataset Preparation
 
-Single speaker, clean English speech, ~24 hours total.
+The way it is done is, in the dataset, we concatenate both text tokens and audio tokens together and during the training we teach the model that given these tokens (text tokens), it should generate the following tokens (audio tokens). Technically this is how it is done.
 
-### Step 2: Prepare Dataset
+### Step-by-Step Process
 
-This script does the audio encoding and flattening.
+So how do we actually do this? Let me walk you through the process:
 
-```bash
-python prepare_dataset.py
-```
+**1. Load the text tokenizer**
 
-### Step 3: Train the Model
-
-```bash
-python train.py
-```
-
-Monitor at [wandb.ai](https://wandb.ai). Best checkpoint is auto-saved.
-
-### Step 4: Generate Speech
-
-```bash
-python infer.py
-```
-
-Output: `output.wav` (24kHz audio)
-
-## Adapting This Blueprint
-
-Want to customize? Here's what to change.
-
-### Use a Different LLM
-
-In `train.py`:
+First, we load our text tokenizer (Qwen2.5 in our case):
 ```python
-model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-3B-Instruct")
-tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B-Instruct")
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B")
 ```
 
-Any causal LM works. Bigger models → better quality but slower training.
+**2. Extend the vocabulary**
 
-### Use a Different Codec
-
-In `prepare_dataset.py` and `infer.py`:
+Then we add all those SNAC tokens to the vocabulary. Remember, we need 4096 tokens for each of the 3 layers, plus 2 special tokens:
 ```python
-from encodec import EncodecModel
-codec = EncodecModel.encodec_model_24khz()
+new_tokens = [f"<snac_l{l}_{i}>" for l in range(3) for i in range(4096)] + ["<|audio_start|>", "<|audio_end|>"]
+tokenizer.add_tokens(new_tokens)  # 12,290 new tokens added
 ```
 
-You'll need to adjust flattening based on codec structure. EnCodec uses 8 codebooks instead of 3 layers.
+**3. Load the audio codec**
 
-### Use a Different Dataset
-
-In `prepare_dataset.py`:
+Now we load SNAC:
 ```python
-# Load your custom dataset
-metadata = pd.read_csv("my_dataset.csv")
-# Expected format: columns for 'audio_path' and 'text'
+snac_model = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").cuda().eval()
 ```
 
-Any speech dataset works. Multi-speaker is fine too (model learns multiple voices).
+**4. Encode audio files**
 
-### Train Longer
-
-In `train.py`:
+For each audio file in our dataset, we encode it to SNAC tokens and flatten it:
 ```python
-max_train_steps = 15000  # or 50000 for production quality
+def encode_7_per_frame(wav_path):
+    # Load and resample to 24kHz if needed
+    audio, sr = sf.read(wav_path)
+    if sr != 24000:
+        audio = librosa.resample(audio, orig_sr=sr, target_sr=24000)
+    
+    # Encode with SNAC (encoder)
+    audio = torch.from_numpy(audio).unsqueeze(0).unsqueeze(0).float().cuda()
+    with torch.no_grad():
+        codes = snac_model.encode(audio)  # Returns hierarchical codes [c0, c1, c2]
+    
+    # Flatten it using our 7-per-frame pattern
+    c0, c1, c2 = [c.squeeze(0).squeeze(-1) for c in codes]
+    base_offset = len(tokenizer) - 12290
+    flat = []
+    for i in range(len(c0)):
+        flat.append(base_offset + 0*4096 + c0[i].item())
+        flat.append(base_offset + 1*4096 + c1[2*i].item())
+        flat.append(base_offset + 1*4096 + c1[2*i+1].item())
+        for j in range(4):
+            flat.append(base_offset + 2*4096 + c2[4*i+j].item())
+    return flat
 ```
 
-More steps = better quality, but watch for overfitting. Monitor eval loss.
+**5. Concatenate text and audio**
 
+Then we concatenate everything together:
+```python
+text_ids = tokenizer.encode("Your text here")
+snac_tokens = encode_7_per_frame("audio.wav")
+start_id = tokenizer.convert_tokens_to_ids("<|audio_start|>")
+end_id = tokenizer.convert_tokens_to_ids("<|audio_end|>")
 
-## What Other Models Do
+input_ids = text_ids + [start_id] + snac_tokens + [end_id]
+```
 
-Other teams have built on these same principles:
+**6. Mask the text portion**
 
-**[Maya1](https://huggingface.co/maya-research/maya1) (Maya Research, November 2025):** Production-ready expressive TTS with 3B parameter decoder-only transformer. Uses SNAC codec. Supports 20+ emotion tags (laugh, cry, whisper, rage). Natural language voice control. Sub-100ms latency. Open source under Apache 2.0.
+And here's the important part - we mask the text portion. We don't want the model to predict text from text (it already knows that). We only want it to learn to predict audio tokens:
+```python
+labels = [-100] * (len(text_ids) + 1) + snac_tokens + [end_id]
+```
 
-**[Orpheus](https://github.com/canopylabs/orpheus-tts) (Canopy Labs, 2025):** Single-stage autoregressive TTS. 3B parameter medium model released in 2025, with multilingual support added in April 2025. Clean implementation that inspired much of this pipeline.
+That `-100` is a special value that tells PyTorch to ignore those positions during loss calculation.
 
-**[NeuTTS Air](https://huggingface.co/neuphonic/NeuTTS-Air) (Neuphonic, October 2025):** On-device TTS with 0.5B Qwen backbone. Instant voice cloning from 3-second reference. Runs locally on phones, laptops, Raspberry Pi without cloud dependency.
+You do this for every single audio-text pair in your dataset. You need a LOT of audio data. The better your data, the better your results. We use the LJSpeech dataset which is ~24 hours of clean English speech with 13,100 clips.
 
-**[Moshi](https://github.com/kyutai-labs/moshi) (Kyutai, September 2024):** Real-time full-duplex speech using Mimi codec. Released September 17, 2024. Can listen and speak simultaneously with ~200ms latency. Revolutionary for conversational AI.
+## Training
 
-**[Bark](https://github.com/suno-ai/bark) (Suno AI, April 2023):** Released April 20, 2023. Fully open source. Three-stage cascade supporting multiple languages, emotions, and non-speech sounds (laughter, music). Pioneer in codec-based LM TTS.
+Once we have the dataset, we can get to work. There's a lot of hyper parameters that can be tuned to get the perfect results.
 
-*All follow the same blueprint: audio codec → flatten to tokens → train LLM → generate → unflatten → decode. They differ in codec choice, number of stages, and scale of training data.*
+### The Training Process
+
+Once you have the dataset ready, training is actually pretty straightforward. It's just causal language modeling, like training any other LLM, with a few tweaks.
+
+**Load the base model**
+
+First, load your base model:
+```python
+model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-0.5B")
+model.resize_token_embeddings(len(tokenizer))  # Don't forget this! We added ~12,290 tokens
+```
+
+**Setup optimizer (Optional - can use defaults)**
+
+Then setup your optimizer. I use AdamW with some custom settings:
+```python
+optimizer = torch.optim.AdamW(
+    model.parameters(),
+    lr=5e-5,
+    betas=(0.95, 0.90), 
+    eps=1e-7,
+    weight_decay=0.01
+)
+```
+
+**Learning rate schedule (Optional)**
+
+I also use a cosine learning rate schedule with warmup. Sounds fancy, but it just means the learning rate starts low, goes up, then gradually decreases:
+```python
+def lr_decay_lambda(step):
+    if step < warmup_steps:
+        return float(step) / float(max(1, warmup_steps))
+    progress = float(step - warmup_steps) / float(max(1, max_steps - warmup_steps))
+    return max(0.1, 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+scheduler = LambdaLR(optimizer, lr_lambda=lr_decay_lambda)
+```
+
+**Training configuration**
+
+Setup your training arguments:
+```python
+args = TrainingArguments(
+    output_dir="./qwen-snac-tts",
+    per_device_train_batch_size=6,
+    gradient_accumulation_steps=8,  # Effective batch size = 48
+    learning_rate=5e-5,
+    max_steps=200,  # This is just for demo. Use 15000+ for real results
+    bf16=True,  # Much faster than fp32
+    eval_strategy="steps",
+    eval_steps=10,
+    save_steps=10,
+    logging_steps=1,
+    report_to="wandb",  # I love watching those graphs go down
+)
+```
+
+**Run training**
+
+And then just... train:
+```python
+trainer = Trainer(
+    model=model,
+    args=args,
+    train_dataset=train_ds,
+    eval_dataset=eval_ds,
+    data_collator=collate_fn,
+    optimizers=(optimizer, scheduler)
+)
+
+trainer.train()
+```
+
+That's it. Now you wait. And wait. And wait some more.
+
+### Hyperparameters to Tweak
+
+A few things you might want to tweak:
+- **Learning rate**: 5e-5 works well for me, but you can try anywhere from 1e-5 to 1e-4
+- **Max steps**: More steps usually means better quality, but watch out for overfitting
+- **Gradient accumulation**: If your GPU is screaming for mercy, increase this
+- **Temperature** (for inference): Controls how random the generation is. 0.7-0.9 gives natural-sounding speech
+- **Top-p** (for inference): Another sampling parameter. 0.9 is a good default
+
+## Inference
+
+So, once we have a model that is trained to generate audio tokens, we can finally generate speech for it. Remember how we wrote a function to transform (unflatten) a sequence of audio tokens to SNAC specific 3 layers? We will be using exactly that here. So we will generate token IDs from the LLM, extract the sequences of audio tokens (remember we taught the LLM to differentiate between text and audio tokens and put the audio tokens between `<|audio_start|>` and `<|audio_end|>`). Once converted (unflattened) to SNAC appropriate data (hierarchical codes), we use the decoder to get the audio waveform, that we can play and verify.
+
+### Advanced Techniques
+
+Now, there's a lot of different techniques to produce better quality and consistent audio. Different annotation techniques are used such as:
+- **Speaker annotation**: Adding speaker signature in the training data so when we use the same signature, model generates audio tokens that matches that speaker's voice
+- **Instruction tuning**: Instead of signature, adds instruction like what should be the emotion and tone
+
+As long as we have lots of examples to back each of these patterns, model will learn it and will be able to reproduce during the inference.
+
+## Related Projects
+
+If you want to check out other people's implementations, here are some popular TTS projects that follow similar ideas:
+
+- **[Maya1](https://huggingface.co/maya-research/maya1)** - This one's production-ready. 3B parameters, uses SNAC, and supports like 20+ emotions (laugh, cry, whisper, rage... you name it)
+- **[Orpheus](https://github.com/canopyai/Orpheus-TTS)** - Super clean implementation. A lot of this pipeline is inspired by Orpheus actually
+- **[NeuTTS Air](https://huggingface.co/neuphonic/NeuTTS-Air)** - Runs on your phone! Uses the same Qwen backbone, can clone voices from just 3 seconds of audio
+- **[Moshi](https://github.com/kyutai-labs/moshi)** - This one's wild. It can listen and speak at the same time with ~200ms latency. Perfect for conversational AI
+- **[Bark](https://github.com/suno-ai/bark)** - The OG. Fully open source, supports multiple languages and emotions. Still one of the best
 
 ## Acknowledgements
 
-This implementation was inspired by and borrows techniques from:
-- [Orpheus](https://github.com/canopyai/Orpheus-TTS) - Training methodology and architecture patterns
-- [Qwen2.5](https://github.com/QwenLM/Qwen2.5) - Base language model
-- [SNAC](https://github.com/hubertsiuzdak/snac) - Audio codec
-- [Ray](https://github.com/ray-project/ray) - Distributed training framework
-- [LJSpeech](https://keithito.com/LJ-Speech-Dataset/) - Speech dataset
+Shoutout to the projects and datasets that made this possible:
+- **[Orpheus](https://github.com/canopyai/Orpheus-TTS)** - For the training methodology and that clever flattening pattern
+- **[Qwen2.5](https://github.com/QwenLM/Qwen2.5)** - The base LLM that powers this whole thing
+- **[SNAC](https://github.com/hubertsiuzdak/snac)** - The audio codec that makes all of this work
+- **[Ray](https://github.com/ray-project/ray)** - For distributed training (because ain't nobody got time for single-GPU training)
+- **[LJSpeech](https://keithito.com/LJ-Speech-Dataset/)** - Free, clean dataset that just works
