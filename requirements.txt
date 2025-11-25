@@ -1,0 +1,16 @@
+torch
+torchvision
+torchaudio
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+transformers
+datasets
+accelerate
+soundfile
+librosa
+snac
+tqdm
+pandas
+ray[default]
+ray[train]
+wandb

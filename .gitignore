@@ -1,3 +1,8 @@
+# Custom
+LJSpeech-1.1
+tokenizer_snac
+lj_speech_snac_ready
+qwen-snac-tts
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
