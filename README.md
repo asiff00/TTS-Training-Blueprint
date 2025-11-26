@@ -2,33 +2,33 @@
 # Blueprint for Building Autoregressive TTS
 
 ![TTS Pipeline](assets/tts_pipeline_flow.png)
-TTS stands for text to speech. It takes in text, generates intelligible speech from it. Autoregressive TTS has been very popular lately and we are seeing lots and lots new TTS with good quality everything. Maya1, NuoTTS-Air, Orpheus the list is long. But have you ever wonder how they are trained? Well, that's what we'll be doing here in this article. We will train a model to generate audio. Consider this as a blueprint for training autoregressive Text-to-Speech models. Our goal is to have intuition first understanding of the system.
+TTS stands for text to speech. It takes in text, generates intelligible speech from it. Autoregressive TTS has become very popular lately and we are seeing lots and lots of new TTS with good quality every day. Maya1, NuoTTS-Air, Orpheus, the list is long. But have you ever wondered how they are trained? Well, that's what we'll be doing here in this article. We will train a model to generate audio. Consider this as a blueprint for training autoregressive Text-to-Speech models. Our goal is to have an intuition-first understanding of the process.
 
-Autoregressive TTS are essentially LLM models that is trained on generating audio tokens. Those tokens are converted (decoded) back to audio using a neural audio codec. Before we go in depth of how it works, let's spend a bit on getting intuitive understanding of what token is.
+Autoregressive TTS are essentially LLM models that are trained on generating audio tokens. Those tokens are converted (decoded) back to audio using a neural audio codec. Before we go in-depth into how it works, let's spend a bit on getting an intuitive understanding of what a token is.
 
 ## Token, what is even that?
 
 In its very original form, tokens are just some numbers. That's all it is.
 
-When you type "hello world" into ChatGPT, the model doesn't actually see the words "hello" and "world". It sees numbers. Maybe `[15339, 1879]`. A tokenizer converts (encodes) your text into tokens, i.e., numbers that model understand. And after processing, it again generates its response in numbers, later that gets converted (detokenized) back to words again for us, dumb humans.
+When you type "hello world" into ChatGPT, the model doesn't actually see the words "hello" and "world". It sees numbers. Maybe `[15339, 1879]`. A tokenizer converts (encodes) your text into tokens, i.e., numbers that the model understands. And after processing, it again generates its response in numbers, which later gets converted (detokenized) back to words again for us, dumb humans.
 
-We train LLM to generate these numbers, more accurately predict these numbers, like given a sequence of tokens, what is the likely token comes next in that sequence, so on and so forth. LLM learns this through training. We tell them what tokens to generate through training.
+We train an LLM to generate these numbers, or more accurately predict these numbers. Like given a sequence of tokens, what likely token comes next in that sequence, so on and so forth. The LLM learns this through training. We tell it what tokens to generate through training.
 
-Since everything an LLM sees (even the instruction for what the LLM are supposed to do), can we not just teach LLM to generate tokens that when converted (decoded) makes sounds? That's the whole idea of auto-regressive TTS. We teach LLM to generate audio tokens. That's all we do.
+Since everything an LLM sees (even the instruction for what the LLM is supposed to do) is tokens, can we not just teach the LLM to generate tokens that when converted (decoded) make sounds? That's the whole idea of auto-regressive TTS. We teach the LLM to generate audio tokens. That's all we do.
 
 ## Tokenizer
 
-Since it's all about tokens, we need a system that knows what token stands for what words. A tokenizer does exactly that. It knows what's the token for cat and what's the token for dog and it can convert words to tokens, and tokens to words consistently. BERT, GPT, Llama all variants have their own tokenizer. Tokenizers are specialized to do the conversion on a set of vocabulary that they are given, but it's flexible to extension.
+Since it's all about tokens, we need a system that knows which token stands for which word. A tokenizer does exactly that. It knows what's the token for cat and what's the token for dog, and it can convert words to tokens, and tokens to words consistently. BERT, GPT, Llama, and all variants have their own tokenizer. Tokenizers are specialized to do the conversion on a set of vocabulary that they are given, but they(vocabularies) are flexible to extension.
 
 ## Audio Tokenization
 
-Text and audio tokens both are essentially numbers but most generally used tokenizer doesn't know audio tokens out of the box. We use special system (neural audio codec - encoder/decoder) for that. DAC, SNAC, NuoCodec are some of the popular audio codecs that are used for TTS training. For this specific article, we will be exploring SNAC that powers many of the current popular TTS models.
+Text and audio tokens both are essentially numbers, but most generally used tokenizers don't know audio tokens out of the box. We use a special system (neural audio codec - encoder/decoder) for that. DAC, SNAC, and NuoCodec are some of the popular audio codecs that are used for TTS training. For this specific article, we will be exploring SNAC, which powers many of the current popular TTS models.
 
 ### SNAC
 
-Audio tokenizer i.e., codec models (neural encoder/decoder) takes audio and gives out token representation (discrete codes) of that audio. Each codec has its own pattern that it produces its tokens into and expects to maintain the same pattern to generate (decode) audio back from it. Understanding the pattern is the most important part of the TTS training. This is where you'll be spending most of your energy into. Once you got it sorted, all you do is just sit back and wait for the training to finish. Kidding, there's a lot you have to do, but this is one major part that needs to be sorted.
+Audio tokenizer i.e., codec models (neural encoder/decoder) takes audio and gives out token representation (discrete codes) of that audio. Each codec has its own pattern that it produces its tokens into and expects the same pattern to be maintained to generate (decode) audio back from it. Understanding the pattern is the most important part of the TTS training. This is where you'll be spending most of your energy. Once you've got it sorted, all you do is just sit back and wait for the training to finish. Kidding, there's a lot you have to do, but this is one major part that needs to be sorted.
 
-Anyway, SNAC takes audio (through its encoder) and gives you layers of token representation. It has 3 layers in total, and understanding this is kinda important.
+Anyway, SNAC takes audio (through its encoder) and gives you layers of token representations. It has 3 layers in total, and understanding this is kinda important.
 
 So here's how it works. Instead of giving you one number per audio frame, SNAC gives you multiple numbers arranged in 3 layers. Think of it like describing a photo at different levels of detail:
 
@@ -57,7 +57,7 @@ Each layer uses a codebook of 4096 possible values (0-4095). The encoder just lo
 
 ### Flattening the Hierarchy
 
-Now, as we previously mentioned, LLM is designed to predict the next token in a sequence, therefore, we need to somehow convert this complex time-intervalled 3-layered, hierarchical structure of audio codes to a flat sequence. We need a system that can take SNAC encoded output and convert (flatten) it to 1D sequence of tokens and take a 1D sequence of tokens and reconstruct (unflatten) it to the SNAC decoder's expected 3-layer structure. Here is common pattern variant used by many TTS models currently.
+Now, as we previously mentioned, the LLM is designed to predict the next token in a sequence; therefore, we need to somehow convert this complex time-interval 3-layered, hierarchical structure of audio codes to a flat sequence. We need a system that can take SNAC encoded output and convert (flatten) it to a 1D sequence of tokens and take a 1D sequence of tokens and reconstruct (unflatten) it to the SNAC decoder's expected 3-layer structure. Here is a common pattern variant used by many TTS models currently.
 
 Now here's the problem. LLMs need a flat, 1D sequence. Like `[1, 2, 3, 4, 5, 6, 7, 8, ...]`. But SNAC gives us hierarchical codes in 3 separate layers. So we need to flatten this mess.
 
@@ -88,7 +88,7 @@ The actual implementation follows later in this article.
 
 ### Putting It Together
 
-As I was screaming earlier, LLM will predict the next token when you give it a sequence. So for TTS, the sequence we give it is the tokenized version of the text we want to generate speech for.
+As I was screaming earlier, the LLM will predict the next token when you give it a sequence. So for TTS, the sequence we give it is the tokenized version of the text we want to generate speech for.
 
 Let me show you what "Hello world" actually looks like:
 ```
@@ -108,7 +108,7 @@ But the model can't do this out of the box. We have to teach it. We have to tell
 
 ## Dataset Preparation
 
-The way it is done is, in the dataset, we concatenate both text tokens and audio tokens together and during the training we teach the model that given these tokens (text tokens), it should generate the following tokens (audio tokens). Technically this is how it is done.
+The way it is done is, in the dataset, we concatenate both text tokens and audio tokens, and during the training we teach the model that given these tokens (text tokens), it should generate the following tokens (audio tokens). Lets break it down into steps.
 
 ### Step-by-Step Process
 
@@ -277,31 +277,31 @@ A few things you might want to tweak:
 
 ## Inference
 
-So, once we have a model that is trained to generate audio tokens, we can finally generate speech for it. Remember how we wrote a function to transform (unflatten) a sequence of audio tokens to SNAC specific 3 layers? We will be using exactly that here. So we will generate token IDs from the LLM, extract the sequences of audio tokens (remember we taught the LLM to differentiate between text and audio tokens and put the audio tokens between `<|audio_start|>` and `<|audio_end|>`). Once converted (unflattened) to SNAC appropriate data (hierarchical codes), we use the decoder to get the audio waveform, that we can play and verify.
+So, once we have a model that is trained to generate audio tokens, we can finally generate speech from it. Remember how we wrote a function to transform (unflatten) a sequence of audio tokens to SNAC-specific 3 layers? We will be using exactly that here. So we will generate token IDs from the LLM, extract the sequences of audio tokens (remember we taught the LLM to differentiate between text and audio tokens and put the audio tokens between `<|audio_start|>` and `<|audio_end|>`). Once converted (unflattened) to SNAC-appropriate data (hierarchical codes), we use the decoder to get the audio waveform, which we can play and verify.
 
 ### Advanced Techniques
 
 Now, there's a lot of different techniques to produce better quality and consistent audio. Different annotation techniques are used such as:
-- **Speaker annotation**: Adding speaker signature in the training data so when we use the same signature, model generates audio tokens that matches that speaker's voice
-- **Instruction tuning**: Instead of signature, adds instruction like what should be the emotion and tone
+- **Speaker annotation**: Adding a speaker signature in the training data so when we use the same signature, the model generates audio tokens that match that speaker's voice
+- **Instruction tuning**: Instead of a signature, adds instructions like what should be the emotion and tone
 
-As long as we have lots of examples to back each of these patterns, model will learn it and will be able to reproduce during the inference.
+As long as we have lots of examples to back each of these patterns, the model will learn it and will be able to reproduce them during inference.
 
 ## Related Projects
 
 If you want to check out other people's implementations, here are some popular TTS projects that follow similar ideas:
 
-- **[Maya1](https://huggingface.co/maya-research/maya1)** - This one's production-ready. 3B parameters, uses SNAC, and supports like 20+ emotions (laugh, cry, whisper, rage... you name it)
-- **[Orpheus](https://github.com/canopyai/Orpheus-TTS)** - Super clean implementation. A lot of this pipeline is inspired by Orpheus actually
-- **[NeuTTS Air](https://huggingface.co/neuphonic/NeuTTS-Air)** - Runs on your phone! Uses the same Qwen backbone, can clone voices from just 3 seconds of audio
-- **[Moshi](https://github.com/kyutai-labs/moshi)** - This one's wild. It can listen and speak at the same time with ~200ms latency. Perfect for conversational AI
-- **[Bark](https://github.com/suno-ai/bark)** - The OG. Fully open source, supports multiple languages and emotions. Still one of the best
+- **[Maya1](https://huggingface.co/maya-research/maya1)** - 3B parameters, uses SNAC, and supports 20+ emotions (laugh, cry, whisper, rage, etc)
+- **[Orpheus](https://github.com/canopyai/Orpheus-TTS)** - 3B parameters, Super clean implementation. A lot of this pipeline is inspired by Orpheus actually
+- **[NeuTTS Air](https://huggingface.co/neuphonic/NeuTTS-Air)** - Uses in-house NeuCodec audio codec, and a Qwen backbone, can clone voices from just 3 seconds of audio
+- **[Moshi](https://github.com/kyutai-labs/moshi)** - Uses Mimi audio codec. It can listen and speak at the same time with ~200ms latency. Perfect for conversational AI
+- **[Bark](https://github.com/suno-ai/bark)** - Uses EnCodec audio codec, one of the first of it's kind, supports multiple languages and emotions.
 
 ## Acknowledgements
 
 Shoutout to the projects and datasets that made this possible:
 - **[Orpheus](https://github.com/canopyai/Orpheus-TTS)** - For the training methodology and that clever flattening pattern
-- **[Qwen2.5](https://github.com/QwenLM/Qwen2.5)** - The base LLM that powers this whole thing
+- **[Qwen2.5](https://github.com/QwenLM/Qwen2.5)** - The base LLM we use
 - **[SNAC](https://github.com/hubertsiuzdak/snac)** - The audio codec that makes all of this work
-- **[Ray](https://github.com/ray-project/ray)** - For distributed training (because ain't nobody got time for single-GPU training)
-- **[LJSpeech](https://keithito.com/LJ-Speech-Dataset/)** - Free, clean dataset that just works
+- **[Ray](https://github.com/ray-project/ray)** - For distributed training
+- **[LJSpeech](https://keithito.com/LJ-Speech-Dataset/)** - Free, clean dataset
