@@ -1,4 +1,3 @@
-
 # Blueprint for Building Autoregressive TTS
 
 ![TTS Pipeline](assets/tts_pipeline_flow.png)
@@ -32,18 +31,20 @@ Anyway, SNAC takes audio (through its encoder) and gives you layers of token rep
 
 So here's how it works. Instead of giving you one number per audio frame, SNAC gives you multiple numbers arranged in 3 layers. Think of it like describing a photo at different levels of detail:
 
-- **Layer 0 :** "It's a cat" - just the basic stuff
-- **Layer 1 :** "It's an orange tabby cat" - getting more specific
-- **Layer 2 :** "It's an orange tabby cat with green eyes and a white patch" - all the fine details
+-   **Layer 0 :** "It's a cat" - just the basic stuff
+-   **Layer 1 :** "It's an orange tabby cat" - getting more specific
+-   **Layer 2 :** "It's an orange tabby cat with green eyes and a white patch" - all the fine details
 
 SNAC does the exact same thing for audio:
-- **Layer 0 (1 token per frame):** What phoneme is this? Is the pitch high or low?
-- **Layer 1 (2 tokens per frame):** What does the speaker sound like? Male or female voice?
-- **Layer 2 (4 tokens per frame):** What's the breathiness? Any background noise? The tiny details.
+
+-   **Layer 0 (1 token per frame):** What phoneme is this? Is the pitch high or low?
+-   **Layer 1 (2 tokens per frame):** What does the speaker sound like? Male or female voice?
+-   **Layer 2 (4 tokens per frame):** What's the breathiness? Any background noise? The tiny details.
 
 So for each audio frame, you get **7 total tokens**. 1 from Layer 0, 2 from Layer 1, and 4 from Layer 2. That's 7 numbers representing about 40ms of audio.
 
 Here's what it looks like for one frame:
+
 ```
 Audio frame: "ah" sound (40ms of audio)
 Layer 0: [2847]                    # phoneme + pitch
@@ -62,6 +63,7 @@ Now, as we previously mentioned, the LLM is designed to predict the next token i
 Now here's the problem. LLMs need a flat, 1D sequence. Like `[1, 2, 3, 4, 5, 6, 7, 8, ...]`. But SNAC gives us hierarchical codes in 3 separate layers. So we need to flatten this mess.
 
 We do this by following a simple pattern. For each frame, we arrange the 7 tokens in order:
+
 ```
 Frame 0: [c0_0, c1_0, c1_1, c2_0, c2_1, c2_2, c2_3]
 Frame 1: [c0_1, c1_2, c1_3, c2_4, c2_5, c2_6, c2_7]
@@ -71,6 +73,7 @@ Frame 2: [c0_2, c1_4, c1_5, c2_8, c2_9, c2_10, c2_11]
 Every 7 tokens = 1 audio frame. That's it. Simple pattern. And since it's deterministic, we can reverse it during inference.
 
 Here's what the unflattening looks like conceptually:
+
 ```python
 def unflatten(tokens):
     c0, c1, c2 = [], [], []
@@ -91,6 +94,7 @@ The actual implementation follows later in this article.
 As I was screaming earlier, the LLM will predict the next token when you give it a sequence. So for TTS, the sequence we give it is the tokenized version of the text we want to generate speech for.
 
 Let me show you what "Hello world" actually looks like:
+
 ```
 Text tokens:  [9906, 1879]            # "Hello world" tokenized (Qwen tokenizer)
 Audio start:  [164224]                # <|audio_start|> special token
@@ -117,6 +121,7 @@ So how do we actually do this? Let me walk you through the process:
 **1. Load the text tokenizer**
 
 First, we load our text tokenizer (Qwen2.5 in our case):
+
 ```python
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B")
 ```
@@ -124,6 +129,7 @@ tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B")
 **2. Extend the vocabulary**
 
 Then we add all those SNAC tokens to the vocabulary. Remember, we need 4096 tokens for each of the 3 layers, plus 2 special tokens:
+
 ```python
 new_tokens = [f"<snac_l{l}_{i}>" for l in range(3) for i in range(4096)] + ["<|audio_start|>", "<|audio_end|>"]
 tokenizer.add_tokens(new_tokens)  # 12,290 new tokens added
@@ -132,6 +138,7 @@ tokenizer.add_tokens(new_tokens)  # 12,290 new tokens added
 **3. Load the audio codec**
 
 Now we load SNAC:
+
 ```python
 snac_model = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").cuda().eval()
 ```
@@ -139,18 +146,19 @@ snac_model = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").cuda().eval()
 **4. Encode audio files**
 
 For each audio file in our dataset, we encode it to SNAC tokens and flatten it:
+
 ```python
 def encode_7_per_frame(wav_path):
     # Load and resample to 24kHz if needed
     audio, sr = sf.read(wav_path)
     if sr != 24000:
         audio = librosa.resample(audio, orig_sr=sr, target_sr=24000)
-    
+
     # Encode with SNAC (encoder)
     audio = torch.from_numpy(audio).unsqueeze(0).unsqueeze(0).float().cuda()
     with torch.no_grad():
         codes = snac_model.encode(audio)  # Returns hierarchical codes [c0, c1, c2]
-    
+
     # Flatten it using our 7-per-frame pattern
     c0, c1, c2 = [c.squeeze(0).squeeze(-1) for c in codes]
     base_offset = len(tokenizer) - 12290
@@ -167,6 +175,7 @@ def encode_7_per_frame(wav_path):
 **5. Concatenate text and audio**
 
 Then we concatenate everything together:
+
 ```python
 text_ids = tokenizer.encode("Your text here")
 snac_tokens = encode_7_per_frame("audio.wav")
@@ -179,6 +188,7 @@ input_ids = text_ids + [start_id] + snac_tokens + [end_id]
 **6. Mask the text portion**
 
 And here's the important part - we mask the text portion. We don't want the model to predict text from text (it already knows that). We only want it to learn to predict audio tokens:
+
 ```python
 labels = [-100] * (len(text_ids) + 1) + snac_tokens + [end_id]
 ```
@@ -198,6 +208,7 @@ Once you have the dataset ready, training is actually pretty straightforward. It
 **Load the base model**
 
 First, load your base model:
+
 ```python
 model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-0.5B")
 model.resize_token_embeddings(len(tokenizer))  # Don't forget this! We added ~12,290 tokens
@@ -206,11 +217,12 @@ model.resize_token_embeddings(len(tokenizer))  # Don't forget this! We added ~12
 **Setup optimizer (Optional - can use defaults)**
 
 Then setup your optimizer. I use AdamW with some custom settings:
+
 ```python
 optimizer = torch.optim.AdamW(
     model.parameters(),
     lr=5e-5,
-    betas=(0.95, 0.90), 
+    betas=(0.95, 0.90),
     eps=1e-7,
     weight_decay=0.01
 )
@@ -219,6 +231,7 @@ optimizer = torch.optim.AdamW(
 **Learning rate schedule (Optional)**
 
 I also use a cosine learning rate schedule with warmup. Sounds fancy, but it just means the learning rate starts low, goes up, then gradually decreases:
+
 ```python
 def lr_decay_lambda(step):
     if step < warmup_steps:
@@ -232,6 +245,7 @@ scheduler = LambdaLR(optimizer, lr_lambda=lr_decay_lambda)
 **Training configuration**
 
 Setup your training arguments:
+
 ```python
 args = TrainingArguments(
     output_dir="./qwen-snac-tts",
@@ -251,6 +265,7 @@ args = TrainingArguments(
 **Run training**
 
 And then just... train:
+
 ```python
 trainer = Trainer(
     model=model,
@@ -269,11 +284,12 @@ That's it. Now you wait. And wait. And wait some more.
 ### Hyperparameters to Tweak
 
 A few things you might want to tweak:
-- **Learning rate**: 5e-5 works well for me, but you can try anywhere from 1e-5 to 1e-4
-- **Max steps**: More steps usually means better quality, but watch out for overfitting
-- **Gradient accumulation**: If your GPU is screaming for mercy, increase this
-- **Temperature** (for inference): Controls how random the generation is. 0.7-0.9 gives natural-sounding speech
-- **Top-p** (for inference): Another sampling parameter. 0.9 is a good default
+
+-   **Learning rate**: 5e-5 works well for me, but you can try anywhere from 1e-5 to 1e-4
+-   **Max steps**: More steps usually means better quality, but watch out for overfitting
+-   **Gradient accumulation**: If your GPU is screaming for mercy, increase this
+-   **Temperature** (for inference): Controls how random the generation is. 0.7-0.9 gives natural-sounding speech
+-   **Top-p** (for inference): Another sampling parameter. 0.9 is a good default
 
 ## Inference
 
@@ -282,26 +298,37 @@ So, once we have a model that is trained to generate audio tokens, we can finall
 ### Advanced Techniques
 
 Now, there's a lot of different techniques to produce better quality and consistent audio. Different annotation techniques are used such as:
-- **Speaker annotation**: Adding a speaker signature in the training data so when we use the same signature, the model generates audio tokens that match that speaker's voice
-- **Instruction tuning**: Instead of a signature, adds instructions like what should be the emotion and tone
+
+-   **Speaker annotation**: Adding a speaker signature in the training data so when we use the same signature, the model generates audio tokens that match that speaker's voice
+-   **Instruction tuning**: Instead of a signature, adds instructions like what should be the emotion and tone
 
 As long as we have lots of examples to back each of these patterns, the model will learn it and will be able to reproduce them during inference.
+
+## Check out my other TTS Projects
+
+If you want to explore my other TTS training implementations and conversational AI projects:
+
+-   **[On-Device Speech-to-Speech Conversational AI](https://github.com/asiff00/On-Device-Speech-to-Speech-Conversational-AI)** - End-to-end conversational AI that runs entirely on-device
+-   **[Train Orpheus](https://github.com/asiff00/Training-TTS/tree/main/orpheus)** - Training/finetuning Orpheus TTS model for Bengali language
+-   **[Train Style TTS2](https://github.com/asiff00/Training-TTS/tree/main/style-tts2)** - Training pipeline for Style TTS2 for Bengali language
+-   **[Train Vits](https://github.com/asiff00/Training-TTS/tree/main/vit-tts)** - Training pipeline for the VITS for Bengali language
 
 ## Related Projects
 
 If you want to check out other people's implementations, here are some popular TTS projects that follow similar ideas:
 
-- **[Maya1](https://huggingface.co/maya-research/maya1)** - 3B parameters, uses SNAC, and supports 20+ emotions (laugh, cry, whisper, rage, etc)
-- **[Orpheus](https://github.com/canopyai/Orpheus-TTS)** - 3B parameters, Super clean implementation. A lot of this pipeline is inspired by Orpheus actually
-- **[NeuTTS Air](https://huggingface.co/neuphonic/NeuTTS-Air)** - Uses in-house NeuCodec audio codec, and a Qwen backbone, can clone voices from just 3 seconds of audio
-- **[Moshi](https://github.com/kyutai-labs/moshi)** - Uses Mimi audio codec. It can listen and speak at the same time with ~200ms latency. Perfect for conversational AI
-- **[Bark](https://github.com/suno-ai/bark)** - Uses EnCodec audio codec, one of the first of it's kind, supports multiple languages and emotions.
+-   **[Maya1](https://huggingface.co/maya-research/maya1)** - 3B parameters, uses SNAC, and supports 20+ emotions (laugh, cry, whisper, rage, etc)
+-   **[Orpheus](https://github.com/canopyai/Orpheus-TTS)** - 3B parameters, Super clean implementation. A lot of this pipeline is inspired by Orpheus actually
+-   **[NeuTTS Air](https://huggingface.co/neuphonic/NeuTTS-Air)** - Uses in-house NeuCodec audio codec, and a Qwen backbone, can clone voices from just 3 seconds of audio
+-   **[Moshi](https://github.com/kyutai-labs/moshi)** - Uses Mimi audio codec. It can listen and speak at the same time with ~200ms latency. Perfect for conversational AI
+-   **[Bark](https://github.com/suno-ai/bark)** - Uses EnCodec audio codec, one of the first of it's kind, supports multiple languages and emotions.
 
 ## Acknowledgements
 
 Shoutout to the projects and datasets that made this possible:
-- **[Orpheus](https://github.com/canopyai/Orpheus-TTS)** - For the training methodology and that clever flattening pattern
-- **[Qwen2.5](https://github.com/QwenLM/Qwen2.5)** - The base LLM we use
-- **[SNAC](https://github.com/hubertsiuzdak/snac)** - The audio codec that makes all of this work
-- **[Ray](https://github.com/ray-project/ray)** - For distributed training
-- **[LJSpeech](https://keithito.com/LJ-Speech-Dataset/)** - Free, clean dataset
+
+-   **[Orpheus](https://github.com/canopyai/Orpheus-TTS)** - For the training methodology and that clever flattening pattern
+-   **[Qwen2.5](https://github.com/QwenLM/Qwen2.5)** - The base LLM we use
+-   **[SNAC](https://github.com/hubertsiuzdak/snac)** - The audio codec that makes all of this work
+-   **[Ray](https://github.com/ray-project/ray)** - For distributed training
+-   **[LJSpeech](https://keithito.com/LJ-Speech-Dataset/)** - Free, clean dataset
